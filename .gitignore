@@ -1,0 +1,31 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Build Outputs
+dist/
+dist-electron/
+release/
+
+# Environment Variables (Secrets!)
+.env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+.DS_Store
+.trae/
+
+# Logs
+logs/
+*.log
+
+# Temp
+tmp/
+coverage/
+
+# Misc
+.history/

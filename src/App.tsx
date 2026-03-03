@@ -1,0 +1,112 @@
+import Canvas from './features/editor/Canvas';
+import RightPanel from './features/properties/RightPanel';
+import PlayerWindow from './features/player/PlayerWindow';
+import { useGameEngine } from './store/useRuntimeStore';
+import { useProjectStore } from './store/useProjectStore';
+import { Play } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
+function App() {
+  const isPlaying = useGameEngine((state) => state.isPlaying);
+  const startGame = useGameEngine((state) => state.startGame);
+  const setProject = useProjectStore((state) => state.setProject);
+  const nodes = useProjectStore((state) => state.nodes);
+  const variables = useProjectStore((state) => state.variables);
+
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    // Check for standalone mode (e.g. ?mode=play)
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'play') {
+      setIsStandalone(true);
+      setIsLoading(true);
+      
+      // Load project data
+      fetch('story.json')
+        .then(res => res.json())
+        .then(data => {
+          if (data.project) {
+            setProject(data.project.nodes || [], data.project.edges || []);
+            // Initialize variables
+            const vars = data.project.variables || [];
+            vars.forEach((v: any) => useProjectStore.getState().addVariable(v));
+
+            // Start game immediately
+            setTimeout(() => {
+              const startNode = (data.project.nodes || []).find((n: any) => n.data.isStartNode);
+              if (startNode) {
+                const initialVars: Record<string, any> = {};
+                vars.forEach((v: any) => { initialVars[v.id] = v.defaultValue });
+                startGame(startNode, initialVars);
+              }
+              setIsLoading(false);
+            }, 100);
+          }
+        })
+        .catch(err => {
+          console.error("Failed to load story.json", err);
+          setIsLoading(false);
+          alert("Failed to load story.json. Make sure the file exists in the root directory.");
+        });
+    }
+  }, [setProject, startGame]);
+
+  const handlePlay = () => {
+    const startNode = nodes.find(n => n.data.isStartNode);
+    if (startNode) {
+      const initialVars: Record<string, any> = {};
+      variables.forEach(v => initialVars[v.id] = v.defaultValue);
+      startGame(startNode, initialVars);
+    } else {
+      alert("No Start Node found! Please mark a node as [START].");
+    }
+  };
+
+  if (isStandalone) {
+    if (isLoading) {
+      return (
+        <div className="flex h-screen w-screen items-center justify-center bg-black text-white">
+          <div className="text-center">
+            <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p>Loading Game...</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="h-screen w-screen bg-black overflow-hidden relative">
+        <PlayerWindow />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen w-screen bg-slate-950 text-white overflow-hidden flex-col">
+      {/* Header */}
+      <div className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-20">
+        <h1 className="font-bold text-indigo-500 flex items-center gap-2">
+          <span className="bg-indigo-500/20 p-1 rounded">🎬</span> Choice Editor
+        </h1>
+        <button 
+          onClick={handlePlay}
+          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
+        >
+          <Play size={14} fill="currentColor" /> Play
+        </button>
+      </div>
+
+      <div className="flex-1 flex overflow-hidden relative">
+        <div className="flex-1 relative">
+          <Canvas />
+          {isPlaying && <PlayerWindow />}
+        </div>
+        <RightPanel />
+      </div>
+    </div>
+  )
+}
+
+export default App
