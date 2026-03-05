@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: choice-editor-ingress-prod
+  labels:
+    app: choice-editor
+    environment: prod
+spec:
+  ingressClassName: alb-prod
+  rules:
+  - host: choice.underplay.cc
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: choice-editor-service
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - choice.underplay.cc
