@@ -1,0 +1,81 @@
+name: Build and Deploy to Aliyun OSS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build:web
+
+      - name: Install Aliyun CLI
+        run: |
+          curl -o aliyun-cli-linux-latest-amd64.tgz https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz
+          tar -xvzf aliyun-cli-linux-latest-amd64.tgz
+          sudo mv aliyun /usr/local/bin/
+          aliyun configure set \
+            --profile default \
+            --mode AK \
+            --region cn-shanghai \
+            --access-key-id ${{ secrets.OSS_ACCESS_KEY_ID }} \
+            --access-key-secret ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+
+      - name: Get STS credentials
+        id: sts
+        run: |
+          STS_RESPONSE=$(aliyun sts AssumeRole \
+            --RoleArn ${{ secrets.ALIYUN_ROLE_ARN }} \
+            --RoleSessionName github-actions)
+          echo "::add-mask::$(echo "$STS_RESPONSE" | jq -r '.Credentials.AccessKeyId')"
+          echo "::add-mask::$(echo "$STS_RESPONSE" | jq -r '.Credentials.AccessKeySecret')"
+          echo "::add-mask::$(echo "$STS_RESPONSE" | jq -r '.Credentials.SecurityToken')"
+          echo "access_key_id=$(echo "$STS_RESPONSE" | jq -r '.Credentials.AccessKeyId')" >> "$GITHUB_OUTPUT"
+          echo "access_key_secret=$(echo "$STS_RESPONSE" | jq -r '.Credentials.AccessKeySecret')" >> "$GITHUB_OUTPUT"
+          echo "security_token=$(echo "$STS_RESPONSE" | jq -r '.Credentials.SecurityToken')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup ossutil
+        uses: manyuanrong/setup-ossutil@v3.0
+        with:
+          endpoint: ${{ vars.OSS_ENDPOINT }}
+          access-key-id: ${{ steps.sts.outputs.access_key_id }}
+          access-key-secret: ${{ steps.sts.outputs.access_key_secret }}
+          sts-token: ${{ steps.sts.outputs.security_token }}
+
+      - name: Upload to OSS
+        run: |
+          ossutil rm oss://${{ vars.OSS_BUCKET }}/ -rf
+          ossutil cp -rf dist/ oss://${{ vars.OSS_BUCKET }}/
+
+      - name: Refresh CDN
+        run: |
+          aliyun configure set \
+            --profile sts \
+            --mode StsToken \
+            --region cn-shanghai \
+            --access-key-id ${{ steps.sts.outputs.access_key_id }} \
+            --access-key-secret ${{ steps.sts.outputs.access_key_secret }} \
+            --sts-token ${{ steps.sts.outputs.security_token }}
+
+          aliyun --profile sts cdn RefreshObjectCaches \
+            --ObjectPath https://${{ vars.CDN_DOMAIN }}/ \
+            --ObjectType File
+
+          aliyun --profile sts cdn PushObjectCache \
+            --ObjectPath https://${{ vars.CDN_DOMAIN }}/
