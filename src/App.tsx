@@ -3,9 +3,11 @@ import RightPanel from './features/properties/RightPanel';
 import PlayerWindow from './features/player/PlayerWindow';
 import { useGameEngine } from './store/useRuntimeStore';
 import { useProjectStore } from './store/useProjectStore';
-import { Play } from 'lucide-react';
+import { Play, Share2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
+  buildExportManifest,
+  buildStoryExport,
   CHOICE_EXPORT_MANIFEST_FILE,
   CHOICE_EXPORT_STORY_FILE,
   parseProjectData,
@@ -96,6 +98,29 @@ function App() {
     }
   };
 
+  const downloadJsonFile = (filename: string, payload: unknown) => {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExport = () => {
+    const storyExport = buildStoryExport(nodes, useProjectStore.getState().edges, variables);
+    const exportManifest = buildExportManifest();
+    downloadJsonFile(CHOICE_EXPORT_STORY_FILE, storyExport);
+    downloadJsonFile(CHOICE_EXPORT_MANIFEST_FILE, exportManifest);
+    alert(
+      `Export completed.\n\n` +
+      `- ${CHOICE_EXPORT_STORY_FILE}\n` +
+      `- ${CHOICE_EXPORT_MANIFEST_FILE}\n\n` +
+      `Place both files next to index.html in your web build output, then open index.html?mode=play.`
+    );
+  };
+
   if (isStandalone) {
     if (isLoading) {
       return (
@@ -122,12 +147,20 @@ function App() {
         <h1 className="font-bold text-indigo-500 flex items-center gap-2">
           <span className="bg-indigo-500/20 p-1 rounded">🎬</span> Choice Editor
         </h1>
-        <button 
-          onClick={handlePlay}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
-        >
-          <Play size={14} fill="currentColor" /> Play
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-all shadow-lg shadow-indigo-900/20 active:scale-95"
+          >
+            <Share2 size={14} /> Export
+          </button>
+          <button 
+            onClick={handlePlay}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
+          >
+            <Play size={14} fill="currentColor" /> Play
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden relative">
