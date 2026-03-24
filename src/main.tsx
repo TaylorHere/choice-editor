@@ -47,3 +47,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
   </React.StrictMode>,
 )
+
+if (
+  'serviceWorker' in navigator &&
+  window.isSecureContext &&
+  typeof window.ipcRenderer === 'undefined'
+) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('./sw.js')
+      .catch((error) => console.error('Failed to register service worker', error));
+  });
+}
