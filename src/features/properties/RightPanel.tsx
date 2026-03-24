@@ -9,6 +9,13 @@ import { parseScript } from '../../lib/script-parser';
 import { StoryNode, StoryEdge, ConditionNodeData, StoryNodeData } from '../../types';
 import AIImportModal from '../ai/AIImportModal';
 import { Node } from '@xyflow/react';
+import {
+  buildExportManifest,
+  buildStoryExport,
+  CHOICE_EXPORT_MANIFEST_FILE,
+  CHOICE_EXPORT_STORY_FILE,
+  parseProjectData,
+} from '../../lib/project-format';
 
 export default function RightPanel() {
   const nodes = useProjectStore((state) => state.nodes);
@@ -153,14 +160,7 @@ export default function RightPanel() {
   };
 
   const handleSaveProject = async () => {
-    const projectData = {
-      version: '1.0.0',
-      project: {
-        nodes,
-        edges,
-        variables,
-      },
-    };
+    const projectData = buildStoryExport(nodes, edges, variables);
     
     if (window.ipcRenderer) {
       const result = await window.ipcRenderer.saveProject(JSON.stringify(projectData, null, 2));
@@ -175,7 +175,7 @@ export default function RightPanel() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'story.json';
+      a.download = CHOICE_EXPORT_STORY_FILE;
       a.click();
       URL.revokeObjectURL(url);
     }
@@ -183,29 +183,33 @@ export default function RightPanel() {
 
   const handleExportWeb = () => {
     // 1. Download story.json
-    const projectData = {
-      version: '1.0.0',
-      project: {
-        nodes,
-        edges,
-        variables,
-      },
-    };
+    const projectData = buildStoryExport(nodes, edges, variables);
     const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'story.json';
+    a.download = CHOICE_EXPORT_STORY_FILE;
     a.click();
     URL.revokeObjectURL(url);
 
-    // 2. Show instructions
+    // 2. Download choice.manifest.json
+    const exportManifest = buildExportManifest();
+    const manifestBlob = new Blob([JSON.stringify(exportManifest, null, 2)], { type: 'application/json' });
+    const manifestUrl = URL.createObjectURL(manifestBlob);
+    const manifestLink = document.createElement('a');
+    manifestLink.href = manifestUrl;
+    manifestLink.download = CHOICE_EXPORT_MANIFEST_FILE;
+    manifestLink.click();
+    URL.revokeObjectURL(manifestUrl);
+
+    // 3. Show instructions
     alert(
       "Export Started!\n\n" +
-      "1. 'story.json' has been downloaded.\n" +
-      "2. Run 'npm run build:web' to generate the Web Player (dist folder).\n" +
-      "3. Place 'story.json' inside the 'dist' folder (next to index.html).\n" +
-      "4. Open 'index.html?mode=play' in your browser to play the game."
+      `1. '${CHOICE_EXPORT_STORY_FILE}' has been downloaded.\n` +
+      `2. '${CHOICE_EXPORT_MANIFEST_FILE}' has been downloaded.\n` +
+      "3. Run 'npm run build:web' to generate the Web Player (dist folder).\n" +
+      `4. Place both files into the 'dist' folder (next to index.html).\n` +
+      "5. Open 'index.html?mode=play' in your browser or install it as PWA."
     );
   };
 
@@ -215,17 +219,14 @@ export default function RightPanel() {
       if (result.success && result.content) {
         try {
           const data = JSON.parse(result.content);
-          if (data.project) {
-            useProjectStore.getState().setProject(data.project.nodes || [], data.project.edges || []);
-            
-            const currentVars = useProjectStore.getState().variables;
-            currentVars.forEach(v => useProjectStore.getState().removeVariable(v.id));
-            (data.project.variables || []).forEach((v: any) => useProjectStore.getState().addVariable(v));
-            
-            alert(`Project loaded from ${result.filePath}`);
-          } else {
-            alert('Invalid project file format');
-          }
+          const parsed = parseProjectData(data);
+          useProjectStore.getState().setProject(parsed.nodes, parsed.edges);
+          
+          const currentVars = useProjectStore.getState().variables;
+          currentVars.forEach(v => useProjectStore.getState().removeVariable(v.id));
+          parsed.variables.forEach((v) => useProjectStore.getState().addVariable(v));
+          
+          alert(`Project loaded from ${result.filePath}`);
         } catch (e) {
           console.error(e);
           alert('Failed to parse project file');
@@ -244,15 +245,12 @@ export default function RightPanel() {
             const content = e.target?.result as string;
             try {
               const data = JSON.parse(content);
-              if (data.project) {
-                useProjectStore.getState().setProject(data.project.nodes || [], data.project.edges || []);
-                const currentVars = useProjectStore.getState().variables;
-                currentVars.forEach(v => useProjectStore.getState().removeVariable(v.id));
-                (data.project.variables || []).forEach((v: any) => useProjectStore.getState().addVariable(v));
-                alert('Project loaded successfully');
-              } else {
-                alert('Invalid project file format');
-              }
+              const parsed = parseProjectData(data);
+              useProjectStore.getState().setProject(parsed.nodes, parsed.edges);
+              const currentVars = useProjectStore.getState().variables;
+              currentVars.forEach(v => useProjectStore.getState().removeVariable(v.id));
+              parsed.variables.forEach((v) => useProjectStore.getState().addVariable(v));
+              alert('Project loaded successfully');
             } catch (err) {
               console.error(err);
               alert('Failed to parse project file');

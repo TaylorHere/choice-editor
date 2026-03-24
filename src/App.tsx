@@ -5,6 +5,11 @@ import { useGameEngine } from './store/useRuntimeStore';
 import { useProjectStore } from './store/useProjectStore';
 import { Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import {
+  CHOICE_EXPORT_MANIFEST_FILE,
+  CHOICE_EXPORT_STORY_FILE,
+  parseProjectData,
+} from './lib/project-format';
 
 function App() {
   const isPlaying = useGameEngine((state) => state.isPlaying);
@@ -22,34 +27,61 @@ function App() {
     if (params.get('mode') === 'play') {
       setIsStandalone(true);
       setIsLoading(true);
-      
-      // Load project data
-      fetch('story.json')
-        .then(res => res.json())
-        .then(data => {
-          if (data.project) {
-            setProject(data.project.nodes || [], data.project.edges || []);
-            // Initialize variables
-            const vars = data.project.variables || [];
-            vars.forEach((v: any) => useProjectStore.getState().addVariable(v));
 
-            // Start game immediately
-            setTimeout(() => {
-              const startNode = (data.project.nodes || []).find((n: any) => n.data.isStartNode);
-              if (startNode) {
-                const initialVars: Record<string, any> = {};
-                vars.forEach((v: any) => { initialVars[v.id] = v.defaultValue });
-                startGame(startNode, initialVars);
+      const loadStandaloneProject = async () => {
+        try {
+          let storyEntry = CHOICE_EXPORT_STORY_FILE;
+          try {
+            const manifestResponse = await fetch(CHOICE_EXPORT_MANIFEST_FILE);
+            if (manifestResponse.ok) {
+              const exportManifest = await manifestResponse.json();
+              if (
+                exportManifest &&
+                typeof exportManifest === 'object' &&
+                typeof (exportManifest as Record<string, unknown>).entry === 'string'
+              ) {
+                storyEntry = (exportManifest as { entry: string }).entry;
               }
-              setIsLoading(false);
-            }, 100);
+            }
+          } catch {
+            // Backward compatibility: missing manifest falls back to story.json.
           }
-        })
-        .catch(err => {
-          console.error("Failed to load story.json", err);
+
+          const storyResponse = await fetch(storyEntry);
+          if (!storyResponse.ok) {
+            throw new Error(`Failed to fetch ${storyEntry}`);
+          }
+          const rawStory = await storyResponse.json();
+          const parsed = parseProjectData(rawStory);
+
+          setProject(parsed.nodes, parsed.edges);
+          const currentVars = useProjectStore.getState().variables;
+          currentVars.forEach((v) => useProjectStore.getState().removeVariable(v.id));
+          parsed.variables.forEach((v) => useProjectStore.getState().addVariable(v));
+
+          setTimeout(() => {
+            const startNode = parsed.nodes.find((n) => n.data.isStartNode);
+            if (startNode) {
+              const initialVars: Record<string, unknown> = {};
+              parsed.variables.forEach((v) => {
+                initialVars[v.id] = v.defaultValue;
+              });
+              startGame(startNode, initialVars);
+            } else {
+              alert('No Start Node found in exported project.');
+            }
+            setIsLoading(false);
+          }, 100);
+        } catch (error) {
+          console.error('Failed to load standalone project', error);
           setIsLoading(false);
-          alert("Failed to load story.json. Make sure the file exists in the root directory.");
-        });
+          alert(
+            `Failed to load exported files. Please make sure '${CHOICE_EXPORT_STORY_FILE}' exists.`
+          );
+        }
+      };
+
+      loadStandaloneProject();
     }
   }, [setProject, startGame]);
 
