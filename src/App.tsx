@@ -6,7 +6,6 @@ import { useProjectStore } from './store/useProjectStore';
 import { Play, Share2, X, QrCode, Download, Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string';
 import {
   buildExportManifest,
   buildStoryExport,
@@ -31,6 +30,8 @@ function App() {
   const [qrPlayUrl, setQrPlayUrl] = useState('');
   const [qrError, setQrError] = useState('');
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
+  const [qrHost, setQrHost] = useState('');
+  const [qrPort, setQrPort] = useState('');
 
   useEffect(() => {
     // Check for standalone mode (e.g. ?mode=play)
@@ -62,18 +63,6 @@ function App() {
 
       const loadStandaloneProject = async () => {
         try {
-          const encodedData = params.get('data');
-          if (encodedData) {
-            const jsonString = decompressFromEncodedURIComponent(encodedData);
-            if (!jsonString) {
-              throw new Error('Invalid QR payload');
-            }
-            const rawStory = JSON.parse(jsonString);
-            const parsed = parseProjectData(rawStory);
-            startParsedProject(parsed);
-            return;
-          }
-
           let storyEntry = CHOICE_EXPORT_STORY_FILE;
           try {
             const manifestResponse = await fetch(CHOICE_EXPORT_MANIFEST_FILE);
@@ -150,20 +139,18 @@ function App() {
     setIsGeneratingQr(true);
     setQrError('');
     try {
-      const storyExport = buildStoryExport(nodes, edges, variables);
-      const compressed = compressToEncodedURIComponent(JSON.stringify(storyExport));
-      const playUrl = new URL(window.location.href);
-      playUrl.search = '';
-      playUrl.hash = '';
-      playUrl.searchParams.set('mode', 'play');
-      playUrl.searchParams.set('data', compressed);
-
-      if (playUrl.toString().length > 3500) {
-        throw new Error('剧情数据较大，二维码可能无法稳定识别，请改用文件导出。');
+      const host = qrHost.trim();
+      if (!host) {
+        throw new Error('请输入本机局域网 IP，例如 192.168.1.23');
       }
+      const port = qrPort.trim();
+      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      const baseUrl = `${protocol}//${host}${port ? `:${port}` : ''}/`;
+      const playUrl = new URL(baseUrl);
+      playUrl.searchParams.set('mode', 'play');
 
       const qr = await QRCode.toDataURL(playUrl.toString(), {
-        errorCorrectionLevel: 'L',
+        errorCorrectionLevel: 'M',
         margin: 1,
         width: 300,
       });
@@ -222,6 +209,11 @@ function App() {
               setQrDataUrl('');
               setQrPlayUrl('');
               setQrError('');
+              const hostname = window.location.hostname;
+              setQrHost(
+                hostname === 'localhost' || hostname === '127.0.0.1' ? '' : hostname
+              );
+              setQrPort(window.location.port || '4173');
               setShowExportModal(true);
             }}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-all shadow-lg shadow-indigo-900/20 active:scale-95"
@@ -280,11 +272,32 @@ function App() {
                 <div className="text-left">
                   <p className="text-sm font-medium text-slate-100">二维码导出</p>
                   <p className="text-xs text-slate-400">
-                    手机扫码后直接进入播放
+                    二维码仅包含 URL，手机扫码后直接进入播放
                   </p>
                 </div>
                 <QrCode size={16} className="text-emerald-300" />
               </button>
+
+              <div className="rounded-lg border border-slate-700 bg-slate-950 p-3 space-y-2">
+                <p className="text-xs text-slate-300 font-medium">播放地址（开发环境）</p>
+                <p className="text-[11px] text-slate-500">
+                  请先把内容部署在本机 IP 服务上（例如 `npm run preview -- --host 0.0.0.0 --port 4173`）。
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    value={qrHost}
+                    onChange={(e) => setQrHost(e.target.value)}
+                    placeholder="192.168.1.23"
+                    className="col-span-2 bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100 focus:border-indigo-500 outline-none"
+                  />
+                  <input
+                    value={qrPort}
+                    onChange={(e) => setQrPort(e.target.value)}
+                    placeholder="4173"
+                    className="bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
 
               {isGeneratingQr && (
                 <p className="text-xs text-slate-400">正在生成二维码...</p>
