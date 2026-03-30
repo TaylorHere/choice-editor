@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   // Custom file operations
   saveProject: (content: string) => ipcRenderer.invoke('save-project', content),
   loadProject: () => ipcRenderer.invoke('load-project'),
+  deployPreview: (payload: {
+    storyContent: string;
+    manifestContent: string;
+    port?: number;
+  }) => ipcRenderer.invoke('deploy-preview', payload),
 
   // You can expose other APIs you need here.
   // ...

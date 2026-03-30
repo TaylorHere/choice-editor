@@ -2,6 +2,8 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import os from 'os'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -21,6 +23,8 @@ process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(__dirnam
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
 let win: BrowserWindow | null
+let previewProcess: ChildProcessWithoutNullStreams | null = null
+let previewProcessPort: number | null = null
 
 const createWindow = () => {
   win = new BrowserWindow({
@@ -88,6 +92,158 @@ ipcMain.handle('load-project', async (_event) => {
   return { success: false, message: 'Canceled' }
 })
 
+interface DeployPreviewPayload {
+  storyContent: string;
+  manifestContent: string;
+  port?: number;
+}
+
+function getNpmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm'
+}
+
+function getLocalIPv4Addresses(): string[] {
+  const interfaces = os.networkInterfaces()
+  const hosts = new Set<string>()
+  for (const entries of Object.values(interfaces)) {
+    if (!entries) continue
+    for (const entry of entries) {
+      if (entry.family === 'IPv4' && !entry.internal) {
+        hosts.add(entry.address)
+      }
+    }
+  }
+  return [...hosts]
+}
+
+function runBuildWeb(projectRoot: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const npm = getNpmCommand()
+    const buildProcess = spawn(npm, ['run', 'build:web'], {
+      cwd: projectRoot,
+      stdio: 'pipe',
+      shell: false,
+    })
+
+    let logs = ''
+    buildProcess.stdout.on('data', (data) => {
+      logs += data.toString()
+    })
+    buildProcess.stderr.on('data', (data) => {
+      logs += data.toString()
+    })
+
+    buildProcess.on('close', (code) => {
+      if (code === 0) {
+        resolve()
+      } else {
+        reject(new Error(`build:web failed (${code})\n${logs.slice(-2000)}`))
+      }
+    })
+    buildProcess.on('error', (error) => reject(error))
+  })
+}
+
+function stopPreviewProcess() {
+  if (previewProcess && !previewProcess.killed) {
+    previewProcess.kill('SIGTERM')
+  }
+  previewProcess = null
+  previewProcessPort = null
+}
+
+function startPreviewServer(projectRoot: string, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const npm = getNpmCommand()
+    const proc = spawn(
+      npm,
+      ['run', 'preview', '--', '--host', '0.0.0.0', '--port', String(port)],
+      {
+        cwd: projectRoot,
+        stdio: 'pipe',
+        shell: false,
+      }
+    )
+
+    let settled = false
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        proc.kill('SIGTERM')
+        reject(new Error('Preview server start timeout'))
+      }
+    }, 30000)
+
+    const onOutput = (data: Buffer) => {
+      const text = data.toString()
+      if (!settled && (text.includes('Local:') || text.includes('Network:'))) {
+        settled = true
+        clearTimeout(timeout)
+        previewProcess = proc
+        previewProcessPort = port
+        resolve()
+      }
+    }
+
+    proc.stdout.on('data', onOutput)
+    proc.stderr.on('data', onOutput)
+
+    proc.on('close', (code) => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timeout)
+        reject(new Error(`Preview server exited early (${code ?? 'unknown'})`))
+      }
+    })
+
+    proc.on('error', (error) => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timeout)
+        reject(error)
+      }
+    })
+  })
+}
+
+ipcMain.handle('deploy-preview', async (_event, payload: DeployPreviewPayload) => {
+  try {
+    if (!payload || typeof payload.storyContent !== 'string' || typeof payload.manifestContent !== 'string') {
+      return { success: false, message: 'Invalid payload' }
+    }
+
+    const projectRoot = app.getAppPath()
+    const requestedPort = Number.isInteger(payload.port) && payload.port ? payload.port : 4173
+
+    await runBuildWeb(projectRoot)
+
+    const distDir = path.join(projectRoot, 'dist')
+    fs.writeFileSync(path.join(distDir, 'story.json'), payload.storyContent)
+    fs.writeFileSync(path.join(distDir, 'choice.manifest.json'), payload.manifestContent)
+
+    const shouldRestart =
+      !previewProcess || previewProcess.killed || previewProcessPort !== requestedPort
+    if (shouldRestart) {
+      stopPreviewProcess()
+      await startPreviewServer(projectRoot, requestedPort)
+    }
+
+    const hosts = getLocalIPv4Addresses()
+    return {
+      success: true,
+      port: requestedPort,
+      hosts,
+      suggestedHost: hosts[0] || '127.0.0.1',
+      playPath: '/?mode=play',
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Failed to deploy preview',
+    }
+  }
+})
+
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock()
 
@@ -116,7 +272,12 @@ if (!gotTheLock) {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    stopPreviewProcess()
     app.quit()
     win = null
   }
+})
+
+app.on('before-quit', () => {
+  stopPreviewProcess()
 })

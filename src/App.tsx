@@ -30,8 +30,10 @@ function App() {
   const [qrPlayUrl, setQrPlayUrl] = useState('');
   const [qrError, setQrError] = useState('');
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
+  const [isDeployingPreview, setIsDeployingPreview] = useState(false);
   const [qrHost, setQrHost] = useState('');
   const [qrPort, setQrPort] = useState('');
+  const [availableHosts, setAvailableHosts] = useState<string[]>([]);
 
   useEffect(() => {
     // Check for standalone mode (e.g. ?mode=play)
@@ -139,12 +141,38 @@ function App() {
     setIsGeneratingQr(true);
     setQrError('');
     try {
-      const host = qrHost.trim();
+      let host = qrHost.trim();
+      let port = qrPort.trim();
+
+      if (window.ipcRenderer) {
+        setIsDeployingPreview(true);
+        const storyContent = JSON.stringify(buildStoryExport(nodes, edges, variables), null, 2);
+        const manifestContent = JSON.stringify(buildExportManifest(), null, 2);
+        const deployResult = await window.ipcRenderer.deployPreview({
+          storyContent,
+          manifestContent,
+          port: port ? Number(port) : undefined,
+        });
+        if (!deployResult.success) {
+          throw new Error(deployResult.message || '部署预览失败');
+        }
+        if (deployResult.hosts && deployResult.hosts.length > 0) {
+          setAvailableHosts(deployResult.hosts);
+        }
+        if (!host && deployResult.suggestedHost) {
+          host = deployResult.suggestedHost;
+          setQrHost(host);
+        }
+        if (!port && deployResult.port) {
+          port = String(deployResult.port);
+          setQrPort(port);
+        }
+      }
+
       if (!host) {
         throw new Error('请输入本机局域网 IP，例如 192.168.1.23');
       }
-      const port = qrPort.trim();
-      const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+      const protocol = 'http:';
       const baseUrl = `${protocol}//${host}${port ? `:${port}` : ''}/`;
       const playUrl = new URL(baseUrl);
       playUrl.searchParams.set('mode', 'play');
@@ -163,6 +191,7 @@ function App() {
       setQrDataUrl('');
       setQrPlayUrl('');
     } finally {
+      setIsDeployingPreview(false);
       setIsGeneratingQr(false);
     }
   };
@@ -209,6 +238,7 @@ function App() {
               setQrDataUrl('');
               setQrPlayUrl('');
               setQrError('');
+              setAvailableHosts([]);
               const hostname = window.location.hostname;
               setQrHost(
                 hostname === 'localhost' || hostname === '127.0.0.1' ? '' : hostname
@@ -266,7 +296,7 @@ function App() {
 
               <button
                 onClick={handleExportQr}
-                disabled={isGeneratingQr}
+                disabled={isGeneratingQr || isDeployingPreview}
                 className="w-full flex items-center justify-between rounded-lg border border-slate-700 bg-slate-800 px-3 py-3 hover:bg-slate-700 transition-colors disabled:opacity-60"
               >
                 <div className="text-left">
@@ -281,7 +311,9 @@ function App() {
               <div className="rounded-lg border border-slate-700 bg-slate-950 p-3 space-y-2">
                 <p className="text-xs text-slate-300 font-medium">播放地址（开发环境）</p>
                 <p className="text-[11px] text-slate-500">
-                  请先把内容部署在本机 IP 服务上（例如 `npm run preview -- --host 0.0.0.0 --port 4173`）。
+                  {window.ipcRenderer
+                    ? '点击“二维码导出”会自动构建并部署 preview，再生成扫码链接。'
+                    : '请先把内容部署在本机 IP 服务上（例如 npm run preview -- --host 0.0.0.0 --port 4173）。'}
                 </p>
                 <div className="grid grid-cols-3 gap-2">
                   <input
@@ -297,10 +329,28 @@ function App() {
                     className="bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100 focus:border-indigo-500 outline-none"
                   />
                 </div>
+                {availableHosts.length > 0 && (
+                  <div className="text-[11px] text-slate-400 space-y-1">
+                    <p>检测到可用本机 IP：</p>
+                    <div className="flex flex-wrap gap-1">
+                      {availableHosts.map((host) => (
+                        <button
+                          key={host}
+                          onClick={() => setQrHost(host)}
+                          className="px-2 py-1 rounded bg-slate-800 border border-slate-700 hover:border-indigo-500 text-slate-300"
+                        >
+                          {host}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {isGeneratingQr && (
-                <p className="text-xs text-slate-400">正在生成二维码...</p>
+              {(isDeployingPreview || isGeneratingQr) && (
+                <p className="text-xs text-slate-400">
+                  {isDeployingPreview ? '正在自动部署 preview...' : '正在生成二维码...'}
+                </p>
               )}
 
               {qrError && (
